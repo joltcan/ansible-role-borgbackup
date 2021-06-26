@@ -10,5 +10,6 @@
   when: inventory_hostname not in groups.borgbackup_servers
 
 - import_tasks: management.yml
+  run_once: true
   tags:
     - mgmt

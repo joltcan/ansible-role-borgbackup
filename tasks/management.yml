@@ -1,57 +1,47 @@
 ---
-- name: management | put management station prune script
+# https://docs.ansible.com/ansible/latest/collections/ansible/builtin/file_module.html#file-module
+- name:
+    "file : keys"
+  file:
+    state: directory
+    path: "{{ local_tmp | default('~/.ansible/tmp') }}/borg/"
+    recurse: true
+  register: key_dir
+  become_user: "{{ lookup('env', 'USER') }}"
+  delegate_to: localhost
+
+- name:
+    "shell : copy all keys to local"
+  local_action: ansible.builtin.shell scp {{ borgbackup_client_user }}@{{ inventory_hostname }}:/{{ borgbackup_client_user}}/.config/borg/keys/{{ hostvars[item].borgbackup_servers[0].fqdn | replace('.', '_') }}_{{ hostvars[item].borgbackup_servers[0].home | regex_replace('\\/$', '') | replace('/', '_') }}_{{ hostvars[item].borgbackup_servers[0].pool }}_{{ item | replace('-', '_') }} {{ key_dir.path }}
+  loop: "{{ groups.borgbackup }}"
+  become_user: "{{ lookup('env', 'USER') }}"
+  delegate_to: localhost
+  when: "'copykeys' in ansible_run_tags"
+  tags: copykeys
+
+- name:
+    "shell : copy host key to local"
+  local_action: ansible.builtin.shell scp {{ borgbackup_client_user }}@{{ inventory_hostname }}:/{{ borgbackup_client_user}}/.config/borg/keys/{{ hostvars[inventory_hostname].borgbackup_servers[0].fqdn | replace('.', '_') }}_{{ hostvars[inventory_hostname].borgbackup_servers[0].home | regex_replace('\\/$', '') | replace('/', '_') }}_{{ hostvars[inventory_hostname].borgbackup_servers[0].pool }}_{{ inventory_hostname | replace('-', '_') }} {{ key_dir.path }}
+  become_user: "{{ lookup('env', 'USER') }}"
+  delegate_to: localhost
+  when: "'copykeys' not in ansible_run_tags"
+
+- name:
+    "shell : copy keys to management station"
+  local_action: ansible.builtin.shell rsync -a {{ key_dir.path }} {{ borgbackup_management_user }}@{{ borgbackup_managementstation }}:~/.config/borg/keys/
+  become_user: "{{ lookup('env', 'USER') }}"
+  delegate_to: localhost
+
+- name:
+    "template : put management station prune script"
   template:
     src: prune.sh.j2
     dest: "/usr/local/sbin/borg-prune-external.sh"
     owner: "{{ borgbackup_management_user }}"
     group: "{{ borgbackup_management_user }}"
     mode: 0700
-  delegate_to: "{{ item.shortname }}"
+  delegate_to: "{{ borgbackup_managementstation }}"
   loop: "{{ borgbackup_servers }}"
-  when: inventory_hostname in groups.borgbackup_management
+  loop_control:
+    loop_var: backupserver
 
-# - name: management | put management sshpubkey on the normal backupserver
-#   authorized_key:
-#     user: "{{ item.user }}"
-#     key: "{{ borgbackup_management_ssh_pubkey }}"
-#   delegate_to: "{{ item.fqdn }}"
-#   when: item.type == 'normal'
-#   with_items: "{{ borgbackup_servers }}"
-
-# # rsync.net has no python, so we can only use raw to manage ssh keys - workaround with local tmp file
-# - name: management | get rsync.net authorized_keys file
-#   raw: scp {{ item.user }}@{{ item.fqdn }}:.ssh/authorized_keys /tmp/rsync.net-{{ item.fqdn }}-authkeys
-#   delegate_to: localhost
-#   become: no
-#   when: item.type == 'rsync.net'
-#   with_items: "{{ borgbackup_servers }}"
-#   changed_when: false
-
-# - name: management | modify local rsync.net authorized_keys
-#   authorized_key:
-#     user: "{{ ansible_user_id }}"
-#     key: "{{ borgbackup_management_ssh_pubkey }}"
-#     path: "/tmp/rsync.net-{{ item.fqdn }}-authkeys"
-#     manage_dir: no
-#   delegate_to: localhost
-#   become: no
-#   when: item.type == 'rsync.net'
-#   with_items: "{{ borgbackup_servers }}"
-#   register: authkeys
-
-# - name: management | upload local authorized_keys to rsync.net
-#   raw: scp /tmp/rsync.net-{{ item.fqdn }}-authkeys {{ item.user }}@{{ item.fqdn }}:.ssh/authorized_keys
-#   delegate_to: localhost
-#   become: no
-#   when: item.type == 'rsync.net' and authkeys.changed
-#   with_items: "{{ borgbackup_servers }}"
-
-# - name: management | remove tmp authorized_keys files
-#   file:
-#     path: /tmp/rsync.net-{{ item.fqdn }}-authkeys
-#     state: absent
-#   delegate_to: localhost
-#   become: no
-#   with_items: "{{ borgbackup_servers }}"
-#   when: authkeys.changed
-#   changed_when: false

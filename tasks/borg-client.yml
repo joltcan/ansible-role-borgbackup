@@ -1,5 +1,5 @@
 ---
-- name: client | generate ssh key for this machine
+- name: generate ssh key for this machine
   user:
     name: "{{ borgbackup_client_user }}"
     generate_ssh_key: yes
@@ -34,7 +34,7 @@
   with_items: "{{ borgbackup_servers }}"
   tags: config
 
-- name: client | put sshpubkey on the normal backupserver
+- name: add ssh key to backupserver .ssh/config
   authorized_key:
     user: "{{ item.user }}"
     key: "{{ sshkey.stdout }}"
@@ -43,7 +43,6 @@
   when: item.type == 'ssh'
   with_items: "{{ borgbackup_servers }}"
 
-# rsync.net and hetzner have no python, so we can only use raw to manage ssh keys - workaround with local tmp file
 - name: client | get authorized_keys file
   raw: scp {{ item.user }}@{{ item.fqdn }}:.ssh/authorized_keys /tmp/authkeys-{{ item.type }}-{{ item.fqdn }}-authkeys
   delegate_to: localhost
@@ -92,35 +91,6 @@
     path: "{{ item.home }}/{{ item.pool }}/{{ inventory_hostname }}/README"
   delegate_to: "{{ item.shortname }}"
   with_items: "{{ borgbackup_servers }}"
-  
-- name: client | copy borg keys to ansible host
-  fetch:
-    src: "~{{ borgbackup_client_user }}/.config/borg/keys/{{ item.fqdn | replace('.', '_') }}_{{ item.home | regex_replace('\\/$', '') | replace('/', '_') }}_{{ item.pool }}_{{ inventory_hostname | replace('-', '_') }}"
-    dest: /tmp/ansible/borgkeys/
-    flat: yes
-  with_items: "{{ borgbackup_servers }}"
-  tags:
-    - copykeys
-
-- name: client | copy borg keys to management server
-  copy:
-    src: /tmp/ansible/borgkeys/
-    dest: "~{{ borgbackup_management_user }}/.config/borg/keys/"
-    owner: "{{ borgbackup_management_user }}"
-    mode: 0600
-    backup: yes
-  delegate_to: "{{ item.shortname }}"
-  when: item.type == 'normal'
-  with_items: "{{ borgbackup_servers }}"
-  tags:
-    - copykeys
-
-- name: client | delete local copy of keys
-  become: no
-  file:
-    path: /tmp/ansible/borgkeys
-    state: absent
-  delegate_to: localhost
 
 - name: client | check if we have cronjob
   stat:
